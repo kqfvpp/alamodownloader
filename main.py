@@ -1,4 +1,3 @@
-from datetime import datetime, timedelta, timezone
 from html import escape
 import http.server
 import os
@@ -10,7 +9,7 @@ import telebot
 from telebot import types
 from config import TOKEN
 
-# --- KEEP-ALIVE WEB SERVER FOR RENDER ---
+# --- KEEP-ALIVE WEB SERVER FOR RENDER (Supports GET & HEAD for UptimeRobot) ---
 PORT = int(os.environ.get("PORT", 10000))
 
 
@@ -38,7 +37,7 @@ def run_web_server():
     print(f"Web server error: {e}")
 
 
-# Start keep-alive server in background
+# Start keep-alive server in background thread
 threading.Thread(target=run_web_server, daemon=True).start()
 
 # Initialize bot
@@ -50,7 +49,8 @@ def send_welcome(message):
   bot.reply_to(
       message,
       "🎬 <b>TikTok Pure Quality Downloader</b>\n\nSend me any public TikTok"
-      " link, and I will instantly send you the clean, unwatermarked video!",
+      " link (including short vm.tiktok.com links), and I will instantly send"
+      " you the clean, unwatermarked video!",
       parse_mode="HTML",
   )
 
@@ -61,21 +61,33 @@ def send_welcome(message):
 )
 def download_tiktok(message):
   chat_id = message.chat.id
-  tiktok_url = message.text.strip()
+  raw_url = message.text.strip()
 
   processing_msg = bot.send_message(
-      chat_id, "⏳ Fetching video from TikTok..."
+      chat_id, "⏳ Resolving and fetching video from TikTok..."
   )
 
   try:
-    # Use reliable API endpoint to bypass cloud IP blocks
-    api_url = f"https://www.tikwm.com/api/?url={tiktok_url}&hd=1"
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         )
     }
 
+    # Automatically expand short links (vm.tiktok.com / vt.tiktok.com) to full URLs
+    tiktok_url = raw_url
+    if "vm.tiktok.com" in raw_url or "vt.tiktok.com" in raw_url:
+      try:
+        r_redir = requests.get(
+            raw_url, headers=headers, allow_redirects=True, timeout=10
+        )
+        tiktok_url = r_redir.url
+      except Exception:
+        pass
+
+    # Fetch stream data via reliable API
+    api_url = f"https://www.tikwm.com/api/?url={tiktok_url}&hd=1"
     response = requests.get(api_url, headers=headers, timeout=15)
     res_json = response.json()
 
@@ -83,7 +95,6 @@ def download_tiktok(message):
       raise Exception("API returned an error for this link.")
 
     data = res_json["data"]
-    # Get HD link if available, otherwise fallback to standard play link
     video_url = data.get("hdplay") or data.get("play")
     title = data.get("title", "TikTok Video")
 
@@ -107,7 +118,7 @@ def download_tiktok(message):
         f"✨ <b>{safe_title}</b>\n⚡ <i>Original Quality / No Watermark</i>"
     )
 
-    # Telegram streams the video directly from the URL (no server storage needed!)
+    # Telegram streams the video directly from the URL (no server storage/limits issues)
     bot.send_video(
         chat_id,
         video_url,
@@ -126,13 +137,13 @@ def download_tiktok(message):
           " TikTok video.",
           chat_id,
           processing_msg.message_id,
-    )
+      )
     except Exception:
       pass
 
 
 if __name__ == "__main__":
-  print("API-based TikTok bot is online and bulletproof...")
+  print("API-based TikTok bot is online and fully updated...")
   while True:
     try:
       bot.infinity_polling(
