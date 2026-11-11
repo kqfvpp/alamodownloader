@@ -21,6 +21,10 @@ class SimpleHandler(http.server.BaseHTTPRequestHandler):
     self.end_headers()
     self.wfile.write(b"TikTok Downloader Bot is active!")
 
+  def do_HEAD(self):
+    self.send_response(200)
+    self.end_headers()
+
   def log_message(self, format, *args):
     pass
 
