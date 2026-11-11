@@ -5,9 +5,9 @@ import os
 import socketserver
 import threading
 import time
+import requests
 import telebot
 from telebot import types
-import yt_dlp
 from config import TOKEN
 
 # --- KEEP-ALIVE WEB SERVER FOR RENDER ---
@@ -43,15 +43,14 @@ threading.Thread(target=run_web_server, daemon=True).start()
 
 # Initialize bot
 bot = telebot.TeleBot(TOKEN)
-os.makedirs("downloads", exist_ok=True)
 
 
 @bot.message_handler(commands=["start", "help"])
 def send_welcome(message):
   bot.reply_to(
       message,
-      "🎬 <b>TikTok Original Quality Downloader</b>\n\nSend me any public TikTok"
-      " link, and I will fetch the pure, uncompressed file for you!",
+      "🎬 <b>TikTok Pure Quality Downloader</b>\n\nSend me any public TikTok"
+      " link, and I will instantly send you the clean, unwatermarked video!",
       parse_mode="HTML",
   )
 
@@ -65,49 +64,34 @@ def download_tiktok(message):
   tiktok_url = message.text.strip()
 
   processing_msg = bot.send_message(
-      chat_id, "⏳ Extracting original stream from TikTok..."
+      chat_id, "⏳ Fetching video from TikTok..."
   )
 
-  file_path = None
   try:
-    # Advanced yt-dlp configuration with browser headers to bypass datacenter blocks
-    ydl_opts = {
-        "format": "best",
-        "outtmpl": "downloads/%(id)s.%(ext)s",
-        "noplaylist": True,
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            ),
-            "Accept": (
-                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-            ),
-            "Accept-Language": "en-US,en;q=0.5",
-        },
+    # Use reliable API endpoint to bypass cloud IP blocks
+    api_url = f"https://www.tikwm.com/api/?url={tiktok_url}&hd=1"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
     }
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-      info = ydl.extract_info(tiktok_url, download=True)
-      file_path = ydl.prepare_filename(info)
-      title = info.get("title", "TikTok Video")
+    response = requests.get(api_url, headers=headers, timeout=15)
+    res_json = response.json()
 
-    # Check file size (Telegram Bot API has a strict 50MB limit)
-    if os.path.exists(file_path):
-      file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-      if file_size_mb > 49:
-        bot.edit_message_text(
-            "❌ This video is too large (>50MB) for Telegram's bot upload"
-            " limit.",
-            chat_id,
-            processing_msg.message_id,
-        )
-        return
+    if res_json.get("code") != 0:
+      raise Exception("API returned an error for this link.")
+
+    data = res_json["data"]
+    # Get HD link if available, otherwise fallback to standard play link
+    video_url = data.get("hdplay") or data.get("play")
+    title = data.get("title", "TikTok Video")
+
+    if not video_url:
+      raise Exception("Video stream link not found.")
 
     bot.edit_message_text(
-        "📤 Uploading original file to Telegram...",
-        chat_id,
-        processing_msg.message_id,
+        "📤 Sending video...", chat_id, processing_msg.message_id
     )
 
     safe_title = (
@@ -123,14 +107,14 @@ def download_tiktok(message):
         f"✨ <b>{safe_title}</b>\n⚡ <i>Original Quality / No Watermark</i>"
     )
 
-    with open(file_path, "rb") as video_file:
-      bot.send_video(
-          chat_id,
-          video_file,
-          caption=caption,
-          parse_mode="HTML",
-          supports_streaming=True,
-      )
+    # Telegram streams the video directly from the URL (no server storage needed!)
+    bot.send_video(
+        chat_id,
+        video_url,
+        caption=caption,
+        parse_mode="HTML",
+        supports_streaming=True,
+    )
 
     bot.delete_message(chat_id, processing_msg.message_id)
 
@@ -142,21 +126,13 @@ def download_tiktok(message):
           " TikTok video.",
           chat_id,
           processing_msg.message_id,
-      )
+    )
     except Exception:
       pass
 
-  finally:
-    # Guaranteed cleanup of local temporary files
-    if file_path and os.path.exists(file_path):
-      try:
-        os.remove(file_path)
-      except Exception:
-        pass
-
 
 if __name__ == "__main__":
-  print("TikTok downloader bot is online and fully hardened...")
+  print("API-based TikTok bot is online and bulletproof...")
   while True:
     try:
       bot.infinity_polling(
